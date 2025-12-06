@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+
+# Docker
+*.log
+
+# Airflow
+airflow/logs/
+airflow/plugins/
+airflow/airflow.db
+airflow/airflow.cfg
+airflow/webserver_config.py
+
+# Data
+data/
+*.csv
+*.db
+*.sqlite
+
+# MacOS
+.DS_Store
+
+# DBT
+dbt/.user.yml
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Linting and testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+useful_notes.txt
+

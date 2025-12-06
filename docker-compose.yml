@@ -1,0 +1,112 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: carbon_mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+      MONGO_INITDB_DATABASE: carbon_intensity
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - carbon_network
+
+  postgres:
+    image: postgres:16
+    container_name: carbon_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - carbon_network
+
+  airflow-webserver:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: carbon_airflow_webserver
+    restart: always
+    depends_on:
+      - postgres
+      - mongodb
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__WEBSERVER__SECRET_KEY=secret
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+      - ./src:/opt/airflow/src
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "airflow db init &&
+               airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
+               bash /opt/airflow/scripts/setup_airflow_connections.sh &&
+               airflow webserver"
+    networks:
+      - carbon_network
+
+  airflow-scheduler:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: carbon_airflow_scheduler
+    restart: always
+    depends_on:
+      - airflow-webserver
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+      - ./src:/opt/airflow/src
+    command: airflow scheduler
+    networks:
+      - carbon_network
+
+  data-collector:
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    container_name: carbon_data_collector
+    restart: always
+    depends_on:
+      - mongodb
+    environment:
+      - MONGODB_HOST=mongodb
+      - MONGODB_PORT=27017
+      - MONGODB_USER=admin
+      - MONGODB_PASSWORD=admin123
+      - MONGODB_DATABASE=carbon_intensity
+    volumes:
+      - ./src:/app
+    networks:
+      - carbon_network
+
+networks:
+  carbon_network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  postgres_data:
+
