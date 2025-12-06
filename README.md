@@ -262,7 +262,7 @@ WHERE from_timestamp >= NOW() - INTERVAL '24 hours';
 
 ### Переменные окружения
 
-Можно настроить в файле `.env`:
+Можно настроить в файле `.env` (пример в .env-example):
 
 ```bash
 # MongoDB
