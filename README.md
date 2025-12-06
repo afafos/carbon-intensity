@@ -185,6 +185,8 @@ docker-compose logs -f data-collector
 
 ## Просмотр данных
 
+Примеры результатов есть в папке `screenshots/`.
+
 ### MongoDB
 
 ```bash
