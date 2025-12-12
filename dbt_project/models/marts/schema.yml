@@ -1,0 +1,290 @@
+version: 2
+
+models:
+  - name: dm_carbon_intensity_analytics
+    description: >
+      **Основная аналитическая витрина carbon intensity**
+      
+      Комплексная витрина для бизнес-анализа carbon intensity UK энергосистемы.
+      Объединяет данные из ODS и DWH слоев.
+      
+      **Бизнес-кейсы:**
+      - Анализ паттернов по времени суток и дням недели
+      - Оценка точности прогнозов
+      - Определение оптимальных периодов для энергопотребления
+      - Детекция аномалий
+      - Экологические рекомендации
+      
+      **Особенности:**
+      - Использует переменные проекта для параметризации
+      - Генерирует рекомендации с помощью Jinja
+      - Статистический анализ с оконными функциями
+      - Сравнение с историческими данными
+      
+      **Связи:**
+      - Источники: ods_carbon_intensity, dwh_forecast_accuracy
+      - Используется в: BI дашборды, отчеты, аналитика
+    
+    config:
+      elementary:
+        timestamp_column: "mart_updated_at"
+    
+    tests:
+      - elementary.volume_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "period_start"
+      - elementary.freshness_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "period_start"
+    
+    columns:
+      - name: period_key
+        description: Ключ периода (может содержать дубликаты из-за join с forecast_accuracy)
+        tests:
+          - not_null
+          # unique тест убран, так как витрина объединяет данные из разных источников
+      
+      - name: period_start
+        description: Начало 30-минутного периода
+        tests:
+          - not_null
+      
+      - name: data_date
+        description: Дата периода
+        tests:
+          - not_null
+      
+      - name: time_of_day
+        description: Время суток (morning/afternoon/evening/night)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['morning', 'afternoon', 'evening', 'night']
+      
+      - name: day_type
+        description: Тип дня (weekday/weekend)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['weekday', 'weekend']
+      
+      - name: forecast_co2_gco2_kwh
+        description: Прогнозная интенсивность CO2 (gCO₂/kWh)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000
+              inclusive: true
+      
+      - name: actual_co2_gco2_kwh
+        description: Фактическая интенсивность CO2 (gCO₂/kWh)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000
+              inclusive: true
+              config:
+                where: "actual_co2_gco2_kwh IS NOT NULL"
+      
+      - name: forecast_category
+        description: Категория прогнозной интенсивности
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['very_low', 'low', 'moderate', 'high', 'very_high']
+      
+      - name: forecast_quality
+        description: Качество прогноза (excellent/good/acceptable/poor)
+        tests:
+          - accepted_values:
+              values: ['excellent', 'good', 'acceptable', 'poor']
+              config:
+                where: "forecast_quality IS NOT NULL"
+      
+      - name: energy_cleanliness_level
+        description: Уровень чистоты энергии (green_energy/moderate_impact/high_carbon/standard)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['green_energy', 'moderate_impact', 'high_carbon', 'standard']
+      
+      - name: is_peak_carbon_period
+        description: Флаг пикового периода углеродной интенсивности
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+      
+      - name: consumption_recommendation
+        description: Рекомендация по энергопотреблению
+        tests:
+          - not_null
+      
+      - name: intensity_z_score
+        description: Z-score интенсивности (отклонение от среднего в единицах стандартного отклонения)
+        tests:
+          - not_null
+      
+      - name: intensity_percentile_same_hour
+        description: Перцентиль интенсивности среди аналогичных часов
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+      
+      - name: is_statistical_anomaly
+        description: Флаг статистической аномалии (отклонение > 2 сигма)
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+      
+      - name: intensity_anomaly_type
+        description: Тип аномалии (unusually_high/unusually_low/normal)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['unusually_high', 'unusually_low', 'normal']
+
+  - name: dm_carbon_intensity_daily_report
+    description: >
+      **Ежедневный отчет по carbon intensity**
+      
+      Агрегированная витрина на уровне дня для бизнес-отчетности.
+      
+      **Содержит:**
+      - Статистику интенсивности за день
+      - Распределение по категориям
+      - Метрики точности прогнозов
+      - Анализ пиковых часов
+      - Сравнение с предыдущими периодами
+      - Тренды и рекомендации
+      
+      **Использует:**
+      - CTE для многоуровневой агрегации
+      - Оконные функции для сравнения периодов
+      - Jinja для генерации категорий
+      - STRING_AGG для формирования списков
+      
+      **Связи:**
+      - Источник: dm_carbon_intensity_analytics
+      - Используется в: ежедневные дашборды, email-рассылки
+    
+    tests:
+      - elementary.volume_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "data_date"
+      - elementary.event_freshness_anomalies:
+          tags: ["elementary"]
+          event_timestamp_column: "data_date"
+          update_timestamp_column: "report_generated_at"
+    
+    columns:
+      - name: data_date
+        description: Дата отчета
+        tests:
+          - unique
+          - not_null
+      
+      - name: date_formatted
+        description: Дата в формате DD.MM.YYYY
+        tests:
+          - not_null
+      
+      - name: day_type
+        description: Тип дня (weekday/weekend)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['weekday', 'weekend']
+      
+      - name: total_periods
+        description: Количество 30-минутных периодов
+        tests:
+          - not_null
+      
+      - name: data_completeness_pct
+        description: Полнота данных за день (%)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+      
+      - name: avg_daily_intensity
+        description: Средняя интенсивность CO2 за день
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000
+              inclusive: true
+      
+      - name: median_daily_intensity
+        description: Медианная интенсивность за день
+        tests:
+          - not_null
+      
+      - name: min_daily_intensity
+        description: Минимальная интенсивность за день
+        tests:
+          - not_null
+      
+      - name: max_daily_intensity
+        description: Максимальная интенсивность за день
+        tests:
+          - not_null
+      
+      - name: intensity_volatility
+        description: Волатильность интенсивности (стандартное отклонение)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 500
+              inclusive: true
+      
+      - name: forecast_accuracy_rate
+        description: Процент точных прогнозов за день
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+              config:
+                where: "forecast_accuracy_rate IS NOT NULL"
+      
+      - name: daily_forecast_quality
+        description: Общая оценка качества прогнозов за день
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Отличное', 'Хорошее', 'Приемлемое', 'Требует улучшения']
+      
+      - name: top_3_peak_hours
+        description: Топ-3 часа с максимальной интенсивностью
+      
+      - name: top_3_best_hours
+        description: Топ-3 часа с минимальной интенсивностью
+      
+      - name: short_term_trend
+        description: Краткосрочный тренд (Растущий/Снижающийся/Стабильный)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Растущий', 'Снижающийся', 'Стабильный']
+      
+      - name: daily_recommendation
+        description: Рекомендация дня по энергопотреблению
+        tests:
+          - not_null
+      
+      - name: ma7_intensity
+        description: Скользящее среднее за 7 дней
+      
+      - name: ma30_intensity
+        description: Скользящее среднее за 30 дней

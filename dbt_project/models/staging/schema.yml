@@ -1,0 +1,223 @@
+version: 2
+
+models:
+  - name: stg_carbon_intensity_current
+    description: >
+      **Staging модель для текущих (актуальных) версий данных carbon intensity**
+      
+      Производит базовую очистку и нормализацию данных из raw слоя.
+      Отбирает только актуальные версии (valid_to_dttm = 5999-01-01).
+      
+      **Бизнес-логика:**
+      - Очистка и нормализация форматов данных
+      - Расчет ошибок прогнозирования
+      - Преобразование категориальных индексов в числовые
+      - Определение статуса данных (completed/in_progress/future)
+      
+      **Частота обновления:** По мере поступления данных из raw слоя
+      
+      **Связи:**
+      - Источник: raw.carbon_intensity
+      - Используется в: ods_carbon_intensity
+    
+    tests:
+      - elementary.volume_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "data_from_dttm"
+      - elementary.all_columns_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "data_from_dttm"
+    
+    columns:
+      - name: id
+        description: Уникальный идентификатор записи из источника
+        tests:
+          - unique
+          - not_null
+      
+      - name: data_from_dttm
+        description: Начало 30-минутного интервала данных
+        tests:
+          - not_null
+      
+      - name: data_to_dttm
+        description: Конец 30-минутного интервала данных
+        tests:
+          - not_null
+          # Проверка data_to_dttm > data_from_dttm выполняется через custom test
+      
+      - name: period_duration_minutes
+        description: Длительность периода в минутах (обычно 30)
+        tests:
+          - not_null
+          - accepted_values:
+              values: [30]
+              config:
+                severity: warn
+          - dbt_utils.accepted_range:
+              min_value: 25
+              max_value: 35
+              inclusive: true
+      
+      - name: forecast_intensity
+        description: >
+          **Прогнозная интенсивность CO2 в gCO2/kWh**
+          
+          Обычный диапазон: 50-400 gCO2/kWh
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000
+              inclusive: true
+          - elementary.column_anomalies:
+              tags: ["elementary"]
+              timestamp_column: "data_from_dttm"
+      
+      - name: actual_intensity
+        description: >
+          **Фактическая интенсивность CO2 в gCO2/kWh**
+          
+          Появляется после завершения периода
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000
+              inclusive: true
+              config:
+                where: "actual_intensity IS NOT NULL"
+      
+      - name: forecast_error_gco2_kwh
+        description: Разница между прогнозом и фактом (forecast - actual)
+      
+      - name: forecast_error_percent
+        description: Процентная ошибка прогноза
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+              inclusive: true
+              config:
+                where: "forecast_error_percent IS NOT NULL"
+      
+      - name: index_forecast
+        description: Категория прогнозной интенсивности
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['very low', 'low', 'moderate', 'high', 'very high']
+      
+      - name: index_forecast_numeric
+        description: Числовое представление index_forecast (1-5)
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5]
+      
+      - name: index_actual
+        description: Категория фактической интенсивности
+        tests:
+          - accepted_values:
+              values: ['very low', 'low', 'moderate', 'high', 'very high']
+              config:
+                where: "index_actual IS NOT NULL"
+      
+      - name: data_status
+        description: Статус данных (completed/in_progress/future)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['completed', 'in_progress', 'future']
+      
+      - name: valid_from_dttm
+        description: Начало действия этой версии записи (когда был сделан прогноз)
+        tests:
+          - not_null
+      
+      - name: dbt_updated_at
+        description: Время последнего обновления записи в DBT
+        tests:
+          - not_null
+
+  - name: stg_carbon_intensity_history
+    description: >
+      **Staging модель для исторических версий данных carbon intensity**
+      
+      Показывает все версии данных (включая устаревшие прогнозы) для анализа
+      изменений прогнозов во времени.
+      
+      **Бизнес-логика:**
+      - Хранит все версии прогнозов для каждого периода
+      - Вычисляет горизонт прогнозирования (forecast horizon)
+      - Анализирует изменения прогнозов между версиями
+      - Использует оконные функции для расчета дельт
+      
+      **Использование:**
+      - Анализ точности прогнозов в зависимости от горизонта
+      - Изучение паттернов изменения прогнозов
+      - Исследование качества модели прогнозирования
+      
+      **Связи:**
+      - Источник: raw.carbon_intensity
+      - Используется в: dwh_carbon_intensity_fact
+    
+    tests:
+      - elementary.volume_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "forecast_made_at"
+    
+    columns:
+      - name: id
+        description: Уникальный идентификатор версии записи
+        tests:
+          - unique
+          - not_null
+      
+      - name: data_from_dttm
+        description: Начало периода, к которому относятся данные
+        tests:
+          - not_null
+      
+      - name: forecast_made_at
+        description: Время создания этой версии прогноза
+        tests:
+          - not_null
+          # Проверка forecast_made_at <= data_from_dttm может не всегда выполняться
+          # из-за ретроспективных обновлений данных
+      
+      - name: forecast_horizon_hours
+        description: >
+          **Горизонт прогнозирования в часах**
+          
+          Показывает, за сколько часов вперед был сделан прогноз.
+          Отрицательное значение означает ретроспективное обновление.
+        tests:
+          - not_null
+      
+      - name: version_number
+        description: Номер версии для данного периода (1 = первый прогноз)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 1000
+              inclusive: true
+      
+      - name: total_versions
+        description: Общее количество версий для данного периода
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 1000
+              inclusive: true
+      
+      - name: is_current_version
+        description: Флаг текущей (актуальной) версии
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+      
+      - name: forecast_change_from_prev
+        description: Изменение прогноза по сравнению с предыдущей версией (gCO₂/kWh)

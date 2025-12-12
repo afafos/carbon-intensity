@@ -1,0 +1,105 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      **Источник сырых данных из PostgreSQL**
+      
+      Данные загружаются через Airflow из MongoDB каждый час.
+      Используется стратегия версионирования SCD Type 2 для отслеживания изменений прогнозов.
+    
+    database: analytics
+    schema: raw
+    
+    tables:
+      - name: carbon_intensity
+        description: >
+          **Таблица с данными о carbon intensity UK энергосистемы**
+          
+          Содержит:
+          - Прогнозные значения интенсивности CO2 (gCO2/kWh)
+          - Фактические значения интенсивности CO2
+          - Временные интервалы (30-минутные периоды)
+          - Версионность данных (SCD Type 2)
+          
+          Обновление: каждый час через Airflow DAG
+        
+        columns:
+          - name: id
+            description: Технический первичный ключ (автоинкремент)
+            tests:
+              - unique
+              - not_null
+          
+          - name: data_from_dttm
+            description: >
+              **Начало периода данных** (к какому времени относятся данные)
+              
+              Используется как часть бизнес-ключа для версионирования
+            tests:
+              - not_null
+          
+          - name: data_to_dttm
+            description: >
+              **Конец периода данных**
+              
+              Обычно data_to_dttm = data_from_dttm + 30 минут
+            tests:
+              - not_null
+          
+          - name: forecast_intensity
+            description: >
+              **Прогнозная интенсивность CO2 в gCO2/kWh**
+              
+              Значения обычно в диапазоне 50-400 gCO2/kWh
+          
+          - name: actual_intensity
+            description: >
+              **Фактическая интенсивность CO2 в gCO2/kWh**
+              
+              Появляется после завершения периода. До этого NULL.
+          
+          - name: index_forecast
+            description: >
+              **Категория прогнозной интенсивности**
+              
+              Возможные значения: very low, low, moderate, high, very high
+            tests:
+              - accepted_values:
+                  values: ['very low', 'low', 'moderate', 'high', 'very high']
+          
+          - name: index_actual
+            description: >
+              **Категория фактической интенсивности**
+              
+              Возможные значения: very low, low, moderate, high, very high
+          
+          - name: valid_from_dttm
+            description: >
+              **Начало действия этой версии записи (SCD Type 2)**
+              
+              Показывает, когда был сделан данный прогноз
+            tests:
+              - not_null
+          
+          - name: valid_to_dttm
+            description: >
+              **Окончание действия версии записи**
+              
+              5999-01-01 для текущей (актуальной) версии
+            tests:
+              - not_null
+          
+          - name: src_processed_dttm
+            description: Время обработки записи в источнике (MongoDB)
+          
+          - name: processed_dttm
+            description: Время загрузки записи в PostgreSQL
+        
+        # Свежесть данных - ожидаем обновления каждый час
+        freshness:
+          warn_after: {count: 2, period: hour}
+          error_after: {count: 4, period: hour}
+        
+        # Загруженность - минимум 48 записей (24 часа * 2 интервала в час)
+        loaded_at_field: processed_dttm

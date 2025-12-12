@@ -1,5 +1,27 @@
 """
-DAG для переноса данных из MongoDB в PostgreSQL.
+DAG для переноса данных из MongoDB в PostgreSQL (EL процесс).
+
+Описание:
+    Extract-Load процесс, который переносит данные о carbon intensity
+    из MongoDB (source) в PostgreSQL (analytical DWH) с добавлением
+    версионности по стратегии SCD Type 2.
+
+Расписание:
+    Каждый час (0 */1 * * *)
+
+Шаги:
+    1. extract_from_mongodb - извлечение новых данных из MongoDB
+    2. transform_and_load_to_postgres - трансформация и загрузка в PostgreSQL
+    3. log_statistics - логирование статистики загрузки
+
+Особенности:
+    - Инкрементальная загрузка (только новые данные)
+    - SCD Type 2: полная история изменений прогнозов
+    - Версионность: каждое обновление прогноза = новая версия
+    - Upsert логика для текущих версий (is_current_version=true)
+
+Целевая таблица:
+    raw.carbon_intensity в PostgreSQL (analytics база)
 """
 
 import logging

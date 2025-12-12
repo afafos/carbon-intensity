@@ -1,0 +1,36 @@
+# DBT artifacts
+target/
+dbt_packages/
+logs/
+dbt_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+
+# Environment
+.env
+.venv
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# DBT specific
+*.log
+manifest.json
+run_results.json
+catalog.json

@@ -1,0 +1,39 @@
+[sqlfluff]
+# Конфигурация SQLFluff для форматирования SQL (включая DBT модели)
+
+# Диалект SQL
+dialect = postgres
+
+# Правила для проверки
+rules = all
+
+# Исключения из проверки правил
+exclude_rules =
+    L003,  # Indentation не всегда корректно работает с Jinja
+    L031,  # Avoid table aliases in from clauses (мы используем алиасы)
+    L034,  # Select wildcards (иногда SELECT * это ок)
+
+# Максимальная длина строки
+max_line_length = 100
+
+# Отступы
+[sqlfluff:indentation]
+indent_unit = space
+tab_space_size = 4
+indented_joins = True
+indented_using_on = True
+template_blocks_indent = True
+
+# Jinja шаблоны
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = True
+
+# Исключить определенные директории
+[sqlfluff:rules:L010]
+capitalisation_policy = lower
+
+[sqlfluff:rules:L014]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:L030]
+capitalisation_policy = lower

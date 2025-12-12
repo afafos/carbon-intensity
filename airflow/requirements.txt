@@ -7,3 +7,9 @@ requests==2.31.0
 pandas==2.1.4
 python-dotenv==1.0.0
 
+# DBT и зависимости для трансформаций
+dbt-core==1.7.4
+dbt-postgres==1.7.4
+pyyaml==6.0.1
+sqlparse==0.4.4
+

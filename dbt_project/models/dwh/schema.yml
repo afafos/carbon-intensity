@@ -1,0 +1,319 @@
+version: 2
+
+models:
+  - name: dwh_carbon_intensity_fact
+    description: >
+      **Факторная таблица DWH для carbon intensity**
+      
+      Хранит всю историю данных с использованием стратегии APPEND.
+      Содержит все версии прогнозов для каждого периода.
+      
+      **Инкрементальная стратегия:** APPEND
+      - Только добавление новых записей
+      - Подходит для исторических данных
+      - Не удаляет и не обновляет существующие записи
+      
+      **Бизнес-логика:**
+      - Анализ всей истории прогнозов
+      - Расчет трендов с помощью оконных функций
+      - Метрики качества по горизонтам прогнозирования
+      - Детекция аномалий
+      
+      **Использует оконные функции:**
+      - Скользящие средние (MA3, MA12, MA48)
+      - Ранжирование по интенсивности
+      - Перцентили и тренды
+      - Сравнение с предыдущими периодами
+      
+      **Связи:**
+      - Источник: stg_carbon_intensity_history
+      - Используется в: dwh_forecast_accuracy, аналитические отчеты
+    
+    config:
+      elementary:
+        timestamp_column: "dbt_updated_at"
+    
+    tests:
+      - elementary.volume_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "forecast_made_at"
+      - elementary.all_columns_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "forecast_made_at"
+      - elementary.dimension_anomalies:
+          tags: ["elementary"]
+          dimensions: ["forecast_horizon_category"]
+          timestamp_column: "forecast_made_at"
+    
+    columns:
+      - name: fact_key
+        description: >
+          **Уникальный ключ факта**
+          
+          Суррогатный ключ, генерируемый из source_id и forecast_made_at
+        tests:
+          - unique
+          - not_null
+      
+      - name: period_key
+        description: Ключ периода для связи с измерениями
+        tests:
+          - not_null
+          - relationships:
+              to: ref('ods_carbon_intensity')
+              field: period_key
+              config:
+                where: "is_current_version = TRUE"
+                severity: warn
+      
+      - name: data_from_dttm
+        description: Начало периода данных
+        tests:
+          - not_null
+      
+      - name: forecast_made_at
+        description: Время создания прогноза
+        tests:
+          - not_null
+      
+      - name: forecast_horizon_hours
+        description: Горизонт прогнозирования в часах
+        tests:
+          - not_null
+      
+      - name: forecast_horizon_category
+        description: Категория горизонта (immediate/short_term/medium_term/long_term/very_long_term)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['immediate', 'short_term', 'medium_term', 'long_term', 'very_long_term']
+      
+      - name: forecast_intensity
+        description: Прогнозная интенсивность CO2
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000
+              inclusive: true
+      
+      - name: forecast_ma3
+        description: >
+          **Скользящее среднее за 3 периода (1.5 часа)**
+          
+          Используется для сглаживания краткосрочных колебаний
+        tests:
+          - not_null
+      
+      - name: forecast_ma12
+        description: >
+          **Скользящее среднее за 12 периодов (6 часов)**
+          
+          Используется для анализа среднесрочных трендов
+        tests:
+          - not_null
+      
+      - name: forecast_ma48
+        description: >
+          **Скользящее среднее за 48 периодов (24 часа)**
+          
+          Используется для анализа долгосрочных трендов
+      
+      - name: forecast_change_from_prev_period
+        description: Изменение интенсивности по сравнению с предыдущим 30-минутным периодом
+      
+      - name: forecast_pct_change_from_prev_period
+        description: Процентное изменение интенсивности относительно предыдущего периода
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+              inclusive: true
+              config:
+                where: "forecast_pct_change_from_prev_period IS NOT NULL"
+      
+      - name: daily_intensity_rank
+        description: >
+          **Ранг по интенсивности в течение дня**
+          
+          1 = самая высокая интенсивность дня
+        tests:
+          - not_null
+      
+      - name: daily_intensity_percentile
+        description: Перцентиль интенсивности (0-100)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+      
+      - name: short_term_trend
+        description: Краткосрочный тренд (rising/falling/stable)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['rising', 'falling', 'stable']
+      
+      - name: is_outlier
+        description: Флаг аномального значения (экстремальные перцентили)
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+      
+      - name: is_current_version
+        description: Флаг текущей версии прогноза
+        tests:
+          - not_null
+      
+      - name: version_number
+        description: Номер версии прогноза для периода
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 1000
+              inclusive: true
+      
+      - name: dbt_updated_at
+        description: Время обновления записи в DBT
+        tests:
+          - not_null
+
+  - name: dwh_forecast_accuracy
+    description: >
+      **Метрики точности прогнозов carbon intensity**
+      
+      Анализ качества прогнозирования на основе сравнения прогнозов с фактами.
+      
+      **Метрики:**
+      - MAE - средняя абсолютная ошибка
+      - MSE/RMSE - квадратичные ошибки
+      - MAPE - средняя абсолютная процентная ошибка
+      - Accuracy - точность в процентах
+      
+      **Использует CTE для:**
+      - Расчета различных типов ошибок
+      - Категоризации качества прогнозов
+      - Скользящих метрик точности
+      - Анализа улучшения качества со временем
+      
+      **Связи:**
+      - Источник: dwh_carbon_intensity_fact
+      - Используется в: отчеты по качеству, мониторинг модели
+    
+    tests:
+      - elementary.volume_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "data_from_dttm"
+    
+    columns:
+      - name: accuracy_key
+        description: Уникальный ключ метрики точности
+        tests:
+          - unique
+          - not_null
+      
+      - name: fact_key
+        description: Ссылка на факт из dwh_carbon_intensity_fact
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dwh_carbon_intensity_fact')
+              field: fact_key
+      
+      - name: data_date
+        description: Дата периода данных
+        tests:
+          - not_null
+      
+      - name: forecast_intensity
+        description: Прогнозное значение
+        tests:
+          - not_null
+      
+      - name: actual_intensity
+        description: Фактическое значение
+        tests:
+          - not_null
+      
+      - name: error
+        description: Ошибка прогноза (forecast - actual)
+        tests:
+          - not_null
+      
+      - name: absolute_error
+        description: Абсолютная ошибка прогноза
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 500
+              inclusive: true
+      
+      - name: squared_error
+        description: Квадратичная ошибка (для расчета RMSE)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000000
+              inclusive: true
+      
+      - name: absolute_percentage_error
+        description: Абсолютная процентная ошибка (MAPE)
+        tests:
+          - not_null:
+              config:
+                where: "absolute_percentage_error IS NOT NULL"
+      
+      - name: accuracy_percentage
+        description: Точность прогноза в процентах (100% - MAPE)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+              config:
+                where: "accuracy_percentage IS NOT NULL"
+      
+      - name: forecast_quality
+        description: Категория качества прогноза (excellent/good/acceptable/poor)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['excellent', 'good', 'acceptable', 'poor']
+      
+      - name: error_direction
+        description: Направление ошибки (overestimated/underestimated/exact)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['overestimated', 'underestimated', 'exact']
+      
+      - name: rolling_24h_mae
+        description: Скользящая MAE за последние 24 часа
+        tests:
+          - not_null
+      
+      - name: rolling_24h_rmse
+        description: Скользящая RMSE за последние 24 часа
+        tests:
+          - not_null
+      
+      - name: rolling_24h_accuracy_rate
+        description: Процент точных прогнозов за последние 24 часа
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+      
+      - name: is_improving
+        description: Флаг улучшения точности (ошибка меньше предыдущей)
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]

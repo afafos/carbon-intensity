@@ -18,56 +18,247 @@
 
 ---
 
-## Система
+## Старт
+
+### 1. Запуск всех сервисов
+
+```bash
+docker-compose up -d
+```
+
+### 2. Доступ к сервисам
+
+| Сервис | URL | Креды |
+|--------|-----|-------|
+| **Airflow UI** | http://localhost:8080 | admin / admin |
+| **Jupyter Lab** | http://localhost:8888/lab | без пароля |
+| **Elementary Report** | http://localhost:8082/elementary_report.html | без пароля |
+
+
+---
+
+## Архитектура решения
+
+### Высокоуровневая схема
 
 ```
-┌─────────────────────┐
-│  Carbon Intensity   │ <- Источник: UK энергосистема
-│       API           │    Обновление: каждые 30 минут
-└──────────┬──────────┘
-           │ HTTP GET
-           ▼
-┌─────────────────────┐
-│  Data Collector     │ <- Python приложение
-│  (Python Service)   │    Запускается каждые 30 минут
-└──────────┬──────────┘    Действие забирает данные из API
-           │
-           ▼
-┌─────────────────────┐
-│     MongoDB         │ <- Хранит сырые данные
-│  (Source Database)  │    Коллекция carbon_intensity_data
-└──────────┬──────────┘    
-           │
-           ▼
-┌─────────────────────┐
-│      Airflow        │ <- Оркестратор
-│   (Orchestrator)    │    Запускается каждый час
-└──────────┬──────────┘    EL процесс
-           │
-           ▼
-┌─────────────────────┐
-│    PostgreSQL       │ <- SQL база
-│  (Analytics DB)     │    Таблица: raw.carbon_intensity
-└─────────────────────┘    
+┌──────────────────────────────────────────────────────────────────────────┐
+│                            АРХИТЕКТУРА СИСТЕМЫ                           │
+└──────────────────────────────────────────────────────────────────────────┘
+
+                            ┌─────────────────────┐
+                            │  Carbon Intensity   │
+                            │       API           │ <- Источник данных
+                            │  (UK National Grid) │    (каждые 30 мин)
+                            └──────────┬──────────┘
+                                       │ HTTP GET
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          APP: Data Collector                            │
+│                         (Python Service + Docker)                       │
+│                                                                         │
+│  Запрос к API каждые 30 минут                                           │
+│  Сохранение JSON в MongoDB                                              │
+│  Логирование и мониторинг                                               │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │ Insert
+                                 ▼
+                      ┌──────────────────────┐
+                      │      MongoDB         │
+                      │   (Source Storage)   │
+                      │                      │
+                      │  Сырые JSON данные   │
+                      │  Upsert по периоду   │
+                      └──────────┬───────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        AIRFLOW: Оркестрация                             │
+│                          (Scheduler + Webserver)                        │
+│                                                                         │
+│  DAG 1: EL MongoDB → PostgreSQL (каждый час)                            │
+│  ├─ Extract: Чтение новых данных из MongoDB                             │
+│  ├─ Transform: Парсинг JSON, добавление версионности (SCD2)             │
+│  └─ Load: Загрузка в PostgreSQL (raw.carbon_intensity)                  │
+│                                                                         │
+│  DAG 2: DBT Transformations (каждые 2 часа)                             │
+│  ├─ dbt deps: Установка зависимостей                                    │
+│  ├─ dbt run: Построение всех моделей (STG→ODS→DWH→DM)                   │
+│  ├─ dbt test: Запуск тестов качества данных                             │
+│  └─ Elementary: Мониторинг и отчеты                                     │
+│                                                                         |
+│  DAG 3: Data Generation (для тестов)                                    │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │ EL + DBT
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     POSTGRESQL: Analytics Database                      │
+│                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────────┐│
+│  │ RAW LAYER: raw.carbon_intensity                                     ││
+│  │ Сырые данные из MongoDB с SCD Type 2                                ││
+│  └─────────────────────────────────────────────────────────────────────┘│
+│                                 │                                       │
+│                                 │ DBT Transformation                    │
+│                                 ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐│
+│  │ STAGING LAYER: staging.*                                            ││
+│  │  stg_carbon_intensity_current  (VIEW)                               ││
+│  │  stg_carbon_intensity_history  (VIEW)                               ││
+│  │ Функции: Очистка, нормализация, базовые метрики                     ││
+│  └─────────────────────────────────────────────────────────────────────┘│
+│                                 │                                       │
+│                                 ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐│
+│  │ ODS LAYER: ods.*                                                    ││
+│  │  ods_carbon_intensity (INCREMENTAL: DELETE+INSERT)                  ││
+│  │  ods_carbon_intensity_daily_summary (INCREMENTAL: MERGE)            ││
+│  │ Функции: Обогащение, категоризация, дневные агрегаты                ││
+│  └─────────────────────────────────────────────────────────────────────┘│
+│                                 │                                       │
+│                                 ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐│
+│  │ DWH LAYER: dwh.*                                                    ││
+│  │  dwh_carbon_intensity_fact (INCREMENTAL: APPEND)                    ││
+│  │  dwh_forecast_accuracy (INCREMENTAL: APPEND)                        ││
+│  │ Функции: История, оконные функции, метрики качества                 ││
+│  └─────────────────────────────────────────────────────────────────────┘│
+│                                 │                                       │
+│                                 ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐│
+│  │ DATA MARTS: marts.*                                                 ││
+│  │  dm_carbon_intensity_analytics (TABLE)                              ││
+│  │  dm_carbon_intensity_daily_report (TABLE)                           ││
+│  │ Функции: BI-метрики, рекомендации, готовые отчеты                   ││
+│  └─────────────────────────────────────────────────────────────────────┘│
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    BI & ANALYTICS: Визуализация                         │
+│                                                                         │
+│  Jupyter Notebook: Исследовательский анализ данных                      │
+│  Elementary: Отчеты качества данных                                     |
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Компоненты системы
+
+### 1. **APP** - Data Collector (Python Service)
+
+**Расположение:** `src/`
+
+**Функции:**
+- Сбор данных из Carbon Intensity API каждые 30 минут
+- Сохранение в MongoDB с upsert стратегией
+- Логирование и метрики
+- Запуск в Docker контейнере
+
+---
+
+### 2. **AIRFLOW** - Оркестрация процессов
+
+**Расположение:** `airflow/`
+
+**DAGs:**
+
+#### `el_mongo_to_postgres` (каждый час)
+- Извлечение новых данных из MongoDB
+- Трансформация и добавление версионности (SCD Type 2). Почему все-таки не 100% ELT - c Python делаем то, что у него лучше получается - парсинг и валидацию. А потом уже DBT с SQL используем для агрегаций, аналитики и т.п. Так проблемы данных выявляются до попадания в DWH, не засоряем raw слой.
+- Загрузка в PostgreSQL raw слой
+
+#### `dbt_transformation` (каждые 2 часа)
+- Запуск DBT моделей
+- Тестирование качества данных
+- Elementary мониторинг
+
+#### `generate_data_load` (для разработки)
+- Генерация тестовых данных
+
+---
+
+### 3. **DWH** - Data Warehouse (PostgreSQL + DBT)
+
+**Расположение:** `dbt_project/`
+
+**Слои:**
+
+#### **STG** (Staging) - Views
+- Очистка и нормализация
+- Базовые трансформации
+- Модели: `stg_carbon_intensity_current`, `stg_carbon_intensity_history`
+
+#### **ODS** (Operational Data Store) - Incremental (DELETE+INSERT, MERGE)
+- Оперативные данные с обогащением
+- Инкрементальная загрузка
+- Модели: `ods_carbon_intensity`, `ods_carbon_intensity_daily_summary`
+
+#### **DWH** (Data Warehouse) - Incremental (APPEND)
+- Исторические факты
+- Оконные функции и аналитика
+- Модели: `dwh_carbon_intensity_fact`, `dwh_forecast_accuracy`
+
+#### **DM** (Data Marts) - Tables
+- Бизнес-витрины
+- Готовые метрики для BI
+- Модели: `dm_carbon_intensity_analytics`, `dm_carbon_intensity_daily_report`
+
+---
+
+### 4. **DBT_PROJECT** - Трансформации данных
+
+**Особенности:**
+
+**4-слойная архитектура**: STG -> ODS -> DWH -> DM  
+**2 типа инкрементальных загрузок**: DELETE+INSERT, APPEND, MERGE  
+**Оконные функции**: скользящие средние, ранжирование, перцентили  
+**CTE**: многоуровневые запросы для сложной логики  
+**Jinja-шаблоны**: параметризация, циклы, условная логика  
+**Комплексное тестирование**: 
+  - 4 типа dbt-core тестов (unique, not_null, accepted_values, relationships)
+  - 6 типов elementary-data тестов
+  - Custom generic и singular тесты  
+**Документация**: schema.yml для всех моделей  
+**Теги**: для разделения моделей по функциональности
+
+**См. подробнее:** `dbt_project/README.md`
+
+---
 
 ### Процессы
 
-**1. Сбор данных** (каждые 30 минут):
-- Data Collector делает запрос к Carbon Intensity API
-- Получает JSON с прогнозом на 24 часа
-- Сохраняет в MongoDB
+#### **1. Сбор данных** (каждые 30 минут)
+```
+Carbon API → Data Collector → MongoDB
+```
+- Запрос к API
+- Парсинг JSON
+- Upsert в MongoDB
 
-**2. EL процесс** (каждый час):
-- Airflow извлекает новые данные из MongoDB
-- Трансформирует формат (JSON -> SQL)
-- Загружает в PostgreSQL
-- Валидирует успешность переноса
+#### **2. EL процесс** (каждый час)
+```
+MongoDB → Airflow → PostgreSQL (raw layer)
+```
+- Извлечение новых данных
+- Добавление версионности (SCD Type 2)
+- Загрузка в raw.carbon_intensity
 
-**3. Мониторинг** (каждые 30 минут):
-- Проверяет доступность API
-- Проверяет работу Data Collector
-- Собирает статистику по данным
+#### **3. DBT трансформации** (каждые 2 часа)
+```
+PostgreSQL raw → DBT → PostgreSQL (staging/ods/dwh/marts)
+```
+- Построение моделей по слоям
+- Инкрементальные загрузки
+- Тесты качества
+
+#### **4. BI и визуализация**
+```
+Jupyter
+```
+- Аналитика и инсайты
+- Отчеты
 
 ---
 
@@ -137,12 +328,15 @@ docker-compose up -d
 ```bash
 docker-compose ps
 
-# Должно показать 5 контейнеров в статусе "Up":
-# - carbon_mongodb
-# - carbon_postgres
-# - carbon_airflow_webserver
-# - carbon_airflow_scheduler
-# - carbon_data_collector
+# Должно показать 8 контейнеров в статусе "Up":
+# - carbon_mongodb           (MongoDB база данных)
+# - carbon_postgres          (PostgreSQL DWH)
+# - carbon_airflow_webserver (Airflow UI)
+# - carbon_airflow_scheduler (Airflow планировщик)
+# - carbon_data_collector    (Сбор данных из API)
+# - carbon_jupyter           (Jupyter Lab для анализа)
+# - carbon_elementary        (Elementary data quality)
+# - carbon_nginx             (Веб-сервер для Elementary отчетов)
 ```
 
 ---
@@ -163,10 +357,11 @@ http://localhost:8080
 
 ### Активация DAGs
 
-В Airflow UI:
+В Airflow UI активируйте DAG:
 
-1. Активировать DAG **`generate_data_load`**
-2. Активировать DAG **`el_mongo_to_postgres`**
+1. **`el_mongo_to_postgres`** - перенос данных MongoDB → PostgreSQL (каждый час)
+2. **`dbt_transformation`** - DBT трансформации и тесты (каждые 2 часа)
+3. **`generate_data_load`** (опционально) - генерация тестовых данных
 
 ---
 
@@ -185,7 +380,7 @@ docker-compose logs -f data-collector
 
 ## Просмотр данных
 
-Примеры результатов есть в папке `screenshots/`.
+**Скриншоты примеров:** См. папку `screenshots/`
 
 ### MongoDB
 
@@ -282,4 +477,120 @@ POSTGRES_PASSWORD=airflow
 
 # Data Collector
 COLLECTION_INTERVAL=1800  # секунд (30 минут)
+```
+
+---
+
+## Дополнительные возможности
+
+### Jupyter Lab - Анализ данных
+
+Jupyter Lab доступен после запуска контейнеров:
+
+```bash
+http://localhost:8888/lab
+```
+
+**Что внутри:**
+- `carbon_intensity_analysis.ipynb` - готовый анализ с визуализациями
+- Доступ к PostgreSQL для SQL запросов
+
+---
+
+### Elementary Data - Мониторинг качества данных
+
+Elementary отчеты генерируются **автоматически** при каждом запуске DBT DAG.
+
+**Просмотр отчета:**
+```bash
+http://localhost:8082/elementary_report.html
+```
+
+**Что показывает:**
+- 6 типов Elementary тестов
+- Графики аномалий и трендов
+- Статистика качества данных
+- История выполнения тестов
+
+**Ручная генерация** (если нужно):
+```bash
+./update_elementary_report.sh
+```
+
+---
+
+### Pre-commit hooks
+
+Автоматическая проверка кода перед коммитом:
+
+**Что проверяется:**
+- Python: Black, Ruff, isort, mypy
+- YAML: prettier, yamllint
+- SQL: SQLFluff
+- DBT: базовые тесты
+
+---
+
+## Структура директорий
+
+```
+carbon-intensity/
+├── README.md                          # Этот файл
+├── docker-compose.yml                 # Оркестрация всех сервисов
+├── .env-example                       # Пример переменных окружения
+├── .gitignore                         # Git исключения
+├── .pre-commit-config.yaml           # Pre-commit hooks
+├── .sqlfluff                         # SQL форматирование
+├── pyproject.toml                    # Python настройки (Black, Ruff)
+├── requirements-dev.txt              # Dev зависимости
+│
+├── src/                              # Приложение для сбора данных
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── main.py
+│   ├── carbon_api.py
+│   ├── database.py
+│   └── config.py
+│
+├── airflow/                          # Airflow DAGs и конфиги
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── dags/
+│       ├── el_mongo_to_postgres.py
+│       ├── dbt_transformation.py
+│       └── generate_data_dag.py
+│
+├── dbt_project/                      # DBT проект
+│   ├── README.md                     # Документация DBT
+│   ├── dbt_project.yml
+│   ├── profiles.yml
+│   ├── packages.yml
+│   ├── requirements.txt
+│   ├── models/
+│   │   ├── sources.yml
+│   │   ├── staging/
+│   │   ├── ods/
+│   │   ├── dwh/
+│   │   └── marts/
+│   └── tests/
+│       ├── singular/
+│       └── generic/
+│
+├── notebooks/                        # Jupyter notebooks для анализа
+│   ├── carbon_intensity_analysis.ipynb
+│   └── requirements.txt
+│
+├── elementary/                       # Elementary data quality
+│   ├── Dockerfile
+│   ├── generate_report.sh
+│   └── reports/
+│       └── elementary_report.html
+│
+├── init-scripts/                     # SQL скрипты инициализации
+│   └── 01-create-analytics-db.sql
+│
+├── scripts/                          # Утилиты
+│   └── setup_airflow_connections.sh  # Настройка Airflow подключений
+│
+└── update_elementary_report.sh       # Скрипт обновления Elementary отчета
 ```

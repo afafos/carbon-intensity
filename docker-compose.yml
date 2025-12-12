@@ -1,4 +1,5 @@
 services:
+  # MongoDB - хранилище сырых данных из Carbon Intensity API
   mongodb:
     image: mongo:7.0
     container_name: carbon_mongodb
@@ -13,6 +14,8 @@ services:
     networks:
       - carbon_network
 
+  # PostgreSQL - аналитическое хранилище данных (DWH)
+  # Содержит базы: airflow, analytics
   postgres:
     image: postgres:16
     container_name: carbon_postgres
@@ -23,11 +26,13 @@ services:
       POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d
+      - postgres_data:/var/lib/postgresql/data       # Данные PostgreSQL
+      - ./init-scripts:/docker-entrypoint-initdb.d   # SQL скрипты инициализации
     networks:
       - carbon_network
 
+  # Airflow Webserver - UI для управления DAGs
+  # URL: http://localhost:8080 (admin/admin)
   airflow-webserver:
     build:
       context: ./airflow
@@ -50,6 +55,9 @@ services:
       - ./airflow/plugins:/opt/airflow/plugins
       - ./scripts:/opt/airflow/scripts
       - ./src:/opt/airflow/src
+      - ./dbt_project:/opt/airflow/dbt_project  # DBT project для трансформаций
+      - ./update_elementary_report.sh:/opt/airflow/update_elementary_report.sh  # Скрипт для обновления Elementary отчета
+      - /var/run/docker.sock:/var/run/docker.sock  # Доступ к Docker для запуска команд в других контейнерах
     ports:
       - "8080:8080"
     command: >
@@ -60,6 +68,8 @@ services:
     networks:
       - carbon_network
 
+  # Airflow Scheduler - планировщик задач для DAGs
+  # Запускает DAGs по расписанию
   airflow-scheduler:
     build:
       context: ./airflow
@@ -79,10 +89,15 @@ services:
       - ./airflow/plugins:/opt/airflow/plugins
       - ./scripts:/opt/airflow/scripts
       - ./src:/opt/airflow/src
+      - ./dbt_project:/opt/airflow/dbt_project  # DBT project для трансформаций
+      - ./update_elementary_report.sh:/opt/airflow/update_elementary_report.sh  # Скрипт для обновления Elementary отчета
+      - /var/run/docker.sock:/var/run/docker.sock  # Доступ к Docker для запуска команд в других контейнерах
     command: airflow scheduler
     networks:
       - carbon_network
 
+  # Data Collector - сервис сбора данных из Carbon Intensity API
+  # Запрашивает API каждые 30 минут и сохраняет в MongoDB
   data-collector:
     build:
       context: ./src
@@ -101,6 +116,61 @@ services:
       - ./src:/app
     networks:
       - carbon_network
+
+  # Jupyter Lab - для анализа данных и визуализации
+  # URL: http://localhost:8888/lab (без токена/пароля)
+  jupyter:
+    image: jupyter/scipy-notebook:latest
+    container_name: carbon_jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - GRANT_SUDO=yes
+    volumes:
+      - ./notebooks:/home/jovyan/work/notebooks          # Jupyter notebooks
+      - ./dbt_project:/home/jovyan/work/dbt_project      # Доступ к DBT проекту
+    command: start-notebook.sh --NotebookApp.token='' --NotebookApp.password=''
+    networks:
+      - carbon_network
+    depends_on:
+      - postgres
+
+  # Elementary - мониторинг качества данных в DBT
+  # Генерирует HTML отчеты о качестве данных (6 типов тестов)
+  elementary:
+    build:
+      context: ./elementary
+      dockerfile: Dockerfile
+    container_name: carbon_elementary
+    volumes:
+      - ./dbt_project:/app/dbt_project              # DBT проект для тестов
+      - ./elementary/reports:/app/reports           # Генерируемые HTML отчеты
+    networks:
+      - carbon_network
+    depends_on:
+      - postgres
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=analytics
+      - DBT_PROFILE=carbon_intensity                # DBT профиль для подключения
+
+  # Nginx - веб-сервер для отображения Elementary отчетов
+  # URL: http://localhost:8082/elementary_report.html
+  nginx:
+    image: nginx:alpine
+    container_name: carbon_nginx
+    ports:
+      - "8082:80"
+    volumes:
+      - ./elementary/reports:/usr/share/nginx/html:ro
+    networks:
+      - carbon_network
+    depends_on:
+      - elementary
 
 networks:
   carbon_network:

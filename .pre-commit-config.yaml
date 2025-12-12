@@ -1,0 +1,176 @@
+# Pre-commit hooks configuration
+#
+# Запуск вручную:
+#   pre-commit run --all-files
+
+default_language_version:
+  python: python3.11
+
+repos:
+  # форматирование и линтинг
+  
+  - repo: https://github.com/psf/black
+    rev: 23.12.1
+    hooks:
+      - id: black
+        name: black - Python code formatter
+        language_version: python3.11
+        args: ['--line-length=100']
+  
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.1.9
+    hooks:
+      - id: ruff
+        name: ruff - Python linter
+        args: ['--fix', '--exit-non-zero-on-fix']
+  
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        name: isort - Sort Python imports
+        args: ['--profile', 'black', '--line-length', '100']
+  
+  # YAML форматирование и валидация
+  
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        name: prettier - Format YAML, JSON, Markdown
+        types_or: [yaml, json, markdown]
+        args: ['--write', '--prose-wrap', 'always']
+  
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.33.0
+    hooks:
+      - id: yamllint
+        name: yamllint - YAML linter
+        args: ['-d', '{extends: default, rules: {line-length: {max: 120}, indentation: {spaces: 2}}}']
+  
+  # SQL форматирование (для DBT моделей)
+  
+  - repo: https://github.com/sqlfluff/sqlfluff
+    rev: 3.0.0
+    hooks:
+      - id: sqlfluff-lint
+        name: sqlfluff-lint - SQL linter
+        args: ['--dialect', 'postgres', '--disable-progress-bar']
+        files: \.sql$
+        additional_dependencies: ['dbt-postgres']
+      
+      - id: sqlfluff-fix
+        name: sqlfluff-fix - SQL formatter
+        args: ['--dialect', 'postgres', '--disable-progress-bar']
+        files: \.sql$
+        additional_dependencies: ['dbt-postgres']
+  
+  # Базовые проверки файлов
+  
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+      
+      - id: end-of-file-fixer
+        name: Fix end of files
+      
+      - id: check-yaml
+        name: Check YAML syntax
+        args: ['--safe']
+      
+      - id: check-json
+        name: Check JSON syntax
+      
+      - id: check-added-large-files
+        name: Check for large files
+        args: ['--maxkb=1000']
+      
+      - id: check-merge-conflict
+        name: Check for merge conflicts
+      
+      - id: check-case-conflict
+        name: Check for case conflicts
+      
+      - id: mixed-line-ending
+        name: Check mixed line endings
+        args: ['--fix=lf']
+      
+      - id: detect-private-key
+        name: Detect private keys
+  
+  # Python дополнительные проверки
+  
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.10.0
+    hooks:
+      - id: python-check-blanket-noqa
+        name: Check blanket noqa
+      
+      - id: python-check-mock-methods
+        name: Check mock methods
+      
+      - id: python-no-eval
+        name: Check for eval() usage
+      
+      - id: python-no-log-warn
+        name: Check for deprecated .warn()
+  
+  # Проверка requirements.txt
+  
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.4
+    hooks:
+      - id: forbid-crlf
+        name: Forbid CRLF line endings
+      
+      - id: forbid-tabs
+        name: Forbid tabs
+        exclude: '(Makefile|\.mk)$'
+  
+  # DBT специфичные проверки
+  
+  - repo: https://github.com/dbt-checkpoint/dbt-checkpoint
+    rev: v1.2.1
+    hooks:
+      - id: check-model-has-description
+        name: Check DBT models have descriptions
+        files: models/.*\.yml$
+      
+      - id: check-model-has-tests
+        name: Check DBT models have tests
+        files: models/.*\.yml$
+      
+      - id: check-model-columns-have-desc
+        name: Check DBT model columns have descriptions
+        files: models/.*\.yml$
+      
+      - id: dbt-compile
+        name: DBT compile check
+        args: ['--project-dir', 'dbt_project', '--profiles-dir', 'dbt_project']
+        pass_filenames: false
+        files: dbt_project/.*\.(sql|yml)$
+      
+      - id: dbt-test
+        name: DBT tests
+        args: ['--project-dir', 'dbt_project', '--profiles-dir', 'dbt_project']
+        pass_filenames: false
+        files: dbt_project/.*\.(sql|yml)$
+
+# Конфигурация для конкретных файлов
+files: ''
+exclude: |
+  (?x)^(
+      .*\.egg-info/.*|
+      \.git/.*|
+      \.venv/.*|
+      venv/.*|
+      __pycache__/.*|
+      .*\.pyc|
+      target/.*|
+      dbt_packages/.*|
+      logs/.*|
+      .*~|
+      \.DS_Store
+  )$

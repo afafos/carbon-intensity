@@ -1,0 +1,12 @@
+packages:
+  # dbt_utils
+  - package: dbt-labs/dbt_utils
+    version: 1.1.1
+  
+  # elementary
+  - package: elementary-data/elementary
+    version: 0.13.2
+  
+  # dbt_expectations - расширенные тесты данных
+  - package: calogica/dbt_expectations
+    version: 0.10.1

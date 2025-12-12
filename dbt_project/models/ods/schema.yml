@@ -1,0 +1,230 @@
+version: 2
+
+models:
+  - name: ods_carbon_intensity
+    description: >
+      **ODS (Operational Data Store) слой для carbon intensity**
+      
+      Оперативное хранилище с инкрементальной загрузкой по стратегии DELETE+INSERT.
+      Содержит только актуальные версии данных с бизнес-атрибутами.
+      
+      **Инкрементальная стратегия:** DELETE+INSERT
+      - Подходит для небольших объемов данных с частыми обновлениями
+      - Гарантирует отсутствие дубликатов по ключу
+      
+      **Бизнес-логика:**
+      - Обогащение временными атрибутами (день недели, время суток)
+      - Категоризация интенсивности
+      - Оценка качества прогнозов
+      
+      **Связи:**
+      - Источник: stg_carbon_intensity_current
+      - Используется в: dm_carbon_intensity_analytics, ods_carbon_intensity_daily_summary
+    
+    config:
+      elementary:
+        timestamp_column: "dbt_updated_at"
+    
+    tests:
+      - elementary.volume_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "data_from_dttm"
+      - elementary.freshness_anomalies:
+          tags: ["elementary"]
+          timestamp_column: "data_from_dttm"
+      - elementary.dimension_anomalies:
+          tags: ["elementary"]
+          dimensions: ["data_day_of_week", "time_of_day"]
+          timestamp_column: "data_from_dttm"
+    
+    columns:
+      - name: source_id
+        description: ID из исходной таблицы raw.carbon_intensity
+        tests:
+          - unique
+          - not_null
+      
+      - name: period_key
+        description: >
+          **Суррогатный ключ периода**
+          
+          Генерируется на основе data_from_dttm и data_to_dttm.
+          Используется для связи с другими таблицами.
+        tests:
+          - unique
+          - not_null
+      
+      - name: data_from_dttm
+        description: Начало 30-минутного периода
+        tests:
+          - not_null
+      
+      - name: data_date
+        description: Дата периода (без времени)
+        tests:
+          - not_null
+      
+      - name: data_year
+        description: Год периода
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 2020
+              max_value: 2030
+              inclusive: true
+      
+      - name: data_day_of_week
+        description: День недели (Monday, Tuesday, ...)
+        tests:
+          - not_null
+      
+      - name: data_day_of_week_num
+        description: Номер дня недели (1=Monday, 7=Sunday)
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5, 6, 7]
+      
+      - name: time_of_day
+        description: Время суток (morning/afternoon/evening/night)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['morning', 'afternoon', 'evening', 'night']
+      
+      - name: day_type
+        description: Тип дня (weekday/weekend)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['weekday', 'weekend']
+      
+      - name: forecast_intensity
+        description: Прогнозная интенсивность CO2 (gCO₂/kWh)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000
+              inclusive: true
+      
+      - name: forecast_intensity_category
+        description: Категория прогнозной интенсивности
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['very_low', 'low', 'moderate', 'high', 'very_high']
+      
+      - name: is_forecast_accurate
+        description: >
+          **Флаг точности прогноза**
+          
+          TRUE если ошибка прогноза <= 10%
+        tests:
+          - not_null:
+              config:
+                where: "actual_intensity IS NOT NULL"
+          - accepted_values:
+              values: [true, false]
+              config:
+                where: "actual_intensity IS NOT NULL"
+      
+      - name: dbt_updated_at
+        description: Время последнего обновления в DBT
+        tests:
+          - not_null
+
+  - name: ods_carbon_intensity_daily_summary
+    description: >
+      **Ежедневная сводка carbon intensity**
+      
+      Агрегированные данные на уровне дня с использованием инкрементальной
+      загрузки по стратегии MERGE.
+      
+      **Инкрементальная стратегия:** MERGE
+      - Обновляет существующие записи при появлении новых данных
+      - Подходит для агрегатов, которые могут дополняться
+      
+      **Бизнес-логика:**
+      - Статистика по интенсивности за день
+      - Анализ точности прогнозов
+      - Распределение по категориям
+      - Метрики полноты и волатильности данных
+      
+      **Связи:**
+      - Источник: ods_carbon_intensity
+      - Используется в: отчеты и дашборды
+    
+    tests:
+      - elementary.event_freshness_anomalies:
+          tags: ["elementary"]
+          event_timestamp_column: "data_date"
+          update_timestamp_column: "dbt_updated_at"
+    
+    columns:
+      - name: data_date
+        description: Дата отчета
+        tests:
+          - unique
+          - not_null
+      
+      - name: total_periods
+        description: Общее количество 30-минутных периодов за день
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 100
+              inclusive: true
+      
+      - name: hours_with_data
+        description: Количество часов с данными
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 24
+              inclusive: true
+      
+      - name: avg_forecast_intensity
+        description: Средняя прогнозная интенсивность за день
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1000
+              inclusive: true
+      
+      - name: median_forecast_intensity
+        description: Медианная прогнозная интенсивность за день
+        tests:
+          - not_null
+      
+      - name: forecast_accuracy_percent
+        description: Процент точных прогнозов за день
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+              config:
+                where: "forecast_accuracy_percent IS NOT NULL"
+      
+      - name: data_completeness_percent
+        description: Полнота данных за день (%)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+      
+      - name: forecast_volatility_percent
+        description: Волатильность интенсивности за день (%)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 200
+              inclusive: true
+              config:
+                where: "forecast_volatility_percent IS NOT NULL"

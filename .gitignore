@@ -50,6 +50,9 @@ data/
 *.db
 *.sqlite
 
+# Backups
+backups/
+
 # MacOS
 .DS_Store
 
@@ -59,6 +62,17 @@ dbt/target/
 dbt/dbt_packages/
 dbt/logs/
 
+# DBT Project
+dbt_project/.user.yml
+dbt_project/target/
+dbt_project/dbt_packages/
+dbt_project/logs/
+dbt_project/dbt_modules/
+dbt_project/*.log
+dbt_project/manifest.json
+dbt_project/run_results.json
+dbt_project/catalog.json
+
 # Linting and testing
 .pytest_cache/
 .coverage
@@ -66,5 +80,10 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-useful_notes.txt
+useful-notes.txt
 
+edr_target/
+.ipynb_checkpoints/
+
+# Elementary reports (generated files)
+elementary/reports/*.html

@@ -1,0 +1,75 @@
+name: 'carbon_intensity_dwh'
+version: '1.0.0'
+config-version: 2
+
+# Профиль для подключения к базе данных
+profile: 'carbon_intensity'
+
+# Пути к различным директориям проекта
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+# Директория для скомпилированных файлов
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Конфигурация моделей
+models:
+  carbon_intensity_dwh:
+    # Staging слой - очистка и парсинг сырых данных
+    staging:
+      +materialized: view
+      +tags: ["staging", "stg"]
+      +schema: staging
+    
+    # ODS слой - оперативное хранилище с инкрементальной загрузкой
+    ods:
+      +materialized: incremental
+      +tags: ["ods"]
+      +schema: ods
+      +on_schema_change: "fail"
+    
+    # DWH слой - хранилище данных с историей
+    dwh:
+      +materialized: incremental
+      +tags: ["dwh"]
+      +schema: dwh
+      +on_schema_change: "sync_all_columns"
+    
+    # Data Mart - витрины данных для аналитики
+    marts:
+      +materialized: table
+      +tags: ["marts", "dm"]
+      +schema: marts
+
+# Snapshots
+snapshots:
+  +target_schema: snapshots
+  +unique_key: id
+  +strategy: timestamp
+  +updated_at: updated_at
+
+# Переменные проекта
+vars:
+  # Дата начала для инкрементальной загрузки (по умолчанию)
+  start_date: '2020-01-01'
+  
+  # Параметры для бизнес-логики
+  high_intensity_threshold: 200  # gCO2/kWh
+  very_high_intensity_threshold: 300  # gCO2/kWh
+  
+  # Elementary настройки для тестирования
+  elementary:
+    timezone: 'UTC'
+
+require-dbt-version: [">=1.5.0", "<2.0.0"]
+
+# Автоматически выполнять dbt deps при необходимости
+on-run-start: []
+on-run-end: []
