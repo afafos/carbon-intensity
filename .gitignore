@@ -87,3 +87,4 @@ edr_target/
 
 # Elementary reports (generated files)
 elementary/reports/*.html
+PRESENTATION.md
