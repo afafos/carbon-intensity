@@ -37,6 +37,11 @@ ENV/
 # Docker
 *.log
 
+# Cloudflare Tunnel
+cloudflared.log
+cloudflared-error.log
+nohup.out
+
 # Airflow
 airflow/logs/
 airflow/plugins/
@@ -88,3 +93,11 @@ edr_target/
 # Elementary reports (generated files)
 elementary/reports/*.html
 PRESENTATION.md
+
+setup_autostart.sh
+start_cloudflared.sh
+stop_cloudflared.sh
+status_cloudflared.sh
+com.cloudflare.cloudflared.plist
+
+CLOUDFLARE_TUNNEL.md

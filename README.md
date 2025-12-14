@@ -28,11 +28,21 @@ docker-compose up -d
 
 ### 2. Доступ к сервисам
 
+#### Локальный доступ
+
 | Сервис | URL | Креды |
 |--------|-----|-------|
 | **Airflow UI** | http://localhost:8080 | admin / admin |
 | **Jupyter Lab** | http://localhost:8888/lab | без пароля |
 | **Elementary Report** | http://localhost:8082/elementary_report.html | без пароля |
+
+#### Публичный доступ (через Cloudflare Tunnel)
+
+| Сервис | URL | Креды |
+|--------|-----|-------|
+| **Airflow UI** | https://airflow.afafos-carbon-intensity.site | admin / admin |
+| **Jupyter Lab** | https://jupyter.afafos-carbon-intensity.site | без пароля |
+| **Elementary Report** | https://elementary.afafos-carbon-intensity.site/elementary_report.html | без пароля |
 
 
 ---
@@ -307,6 +317,12 @@ Jupyter
 - Версия 2 (10:00): forecast=252, actual=null  (прогноз уточнился)
 - Версия 3 (10:30): forecast=252, actual=245   (появился факт)
 ```
+
+---
+
+## Cloudflare Tunnel - Публичный доступ
+
+Проект настроен для публичного доступа через **Cloudflare Tunnel** на домене `afafos-carbon-intensity.site`.
 
 ---
 
