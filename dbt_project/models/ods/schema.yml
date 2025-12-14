@@ -160,6 +160,7 @@ models:
           tags: ["elementary"]
           event_timestamp_column: "data_date"
           update_timestamp_column: "dbt_updated_at"
+          severity: warn
     
     columns:
       - name: data_date

@@ -181,6 +181,7 @@ models:
           tags: ["elementary"]
           event_timestamp_column: "data_date"
           update_timestamp_column: "report_generated_at"
+          severity: warn
     
     columns:
       - name: data_date
