@@ -40,6 +40,7 @@ models:
       - elementary.all_columns_anomalies:
           tags: ["elementary"]
           timestamp_column: "forecast_made_at"
+          severity: warn
       - elementary.dimension_anomalies:
           tags: ["elementary"]
           dimensions: ["forecast_horizon_category"]

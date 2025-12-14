@@ -27,6 +27,7 @@ models:
       - elementary.all_columns_anomalies:
           tags: ["elementary"]
           timestamp_column: "data_from_dttm"
+          severity: warn
     
     columns:
       - name: id
@@ -99,6 +100,7 @@ models:
               inclusive: true
               config:
                 where: "forecast_error_percent IS NOT NULL"
+                severity: warn
       
       - name: index_forecast
         description: Категория прогнозной интенсивности

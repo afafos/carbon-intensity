@@ -6,7 +6,7 @@ echo "Обновление Elementary отчета..."
 # Запускаем генерацию отчета в контейнере elementary
 docker exec carbon_elementary /bin/bash -c "
     cd /app/dbt_project && \
-    DBT_PROFILE=carbon_intensity edr report \
+    edr report \
         --profiles-dir /app/dbt_project \
         --profile-target dev \
         --file-path /app/reports/elementary_report.html

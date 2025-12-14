@@ -5,7 +5,7 @@ packages:
   
   # elementary
   - package: elementary-data/elementary
-    version: 0.13.2
+    version: 0.20.1
   
   # dbt_expectations - расширенные тесты данных
   - package: calogica/dbt_expectations
