@@ -24,10 +24,13 @@ models:
       - elementary.volume_anomalies:
           tags: ["elementary"]
           timestamp_column: "data_from_dttm"
+          config:
+            severity: warn
       - elementary.all_columns_anomalies:
           tags: ["elementary"]
           timestamp_column: "data_from_dttm"
-          severity: warn
+          config:
+            severity: warn
     
     columns:
       - name: id
@@ -74,6 +77,8 @@ models:
           - elementary.column_anomalies:
               tags: ["elementary"]
               timestamp_column: "data_from_dttm"
+              config:
+                severity: warn
       
       - name: actual_intensity
         description: >

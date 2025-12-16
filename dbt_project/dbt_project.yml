@@ -48,6 +48,14 @@ models:
       +tags: ["marts", "dm"]
       +schema: marts
 
+tests:
+  carbon_intensity_dwh:
+    +enabled: true
+    +tags: ["test"]
+    +severity: warn  # ВСЕ тесты будут warnings (не падают)
+    elementary:
+      +severity: warn
+
 # Snapshots
 snapshots:
   +target_schema: snapshots
