@@ -32,18 +32,25 @@ docker-compose up -d
 
 | Сервис | URL | Креды |
 |--------|-----|-------|
+| **Carbon API (Swagger)** | http://localhost:8000/docs | без пароля |
+| **PostgreSQL Web UI** | http://localhost:8083 | без пароля |
+| **MongoDB Web UI** | http://localhost:8084 | admin / admin |
 | **Airflow UI** | http://localhost:8080 | admin / admin |
 | **Jupyter Lab** | http://localhost:8888/lab | без пароля |
 | **Elementary Report** | http://localhost:8082/elementary_report.html | без пароля |
+| **MongoDB** | mongodb://localhost:27017 | admin / admin123 |
+| **PostgreSQL** | postgresql://localhost:5432 | airflow / airflow |
 
 #### Публичный доступ (через Cloudflare Tunnel)
 
 | Сервис | URL | Креды |
 |--------|-----|-------|
+| **Carbon API (Swagger)** | https://api.afafos-carbon-intensity.site/docs | без пароля |
+| **PostgreSQL Web UI** | https://postgres.afafos-carbon-intensity.site | без пароля |
+| **MongoDB Web UI** | https://mongo.afafos-carbon-intensity.site | admin / admin |
 | **Airflow UI** | https://airflow.afafos-carbon-intensity.site | admin / admin |
 | **Jupyter Lab** | https://jupyter.afafos-carbon-intensity.site | без пароля |
 | **Elementary Report** | https://elementary.afafos-carbon-intensity.site/elementary_report.html | без пароля |
-
 
 ---
 
@@ -64,12 +71,16 @@ docker-compose up -d
                                        │ HTTP GET
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          APP: Data Collector                            │
-│                         (Python Service + Docker)                       │
+│                     HTTP API SERVICE (FastAPI)                          │
+│                         Port: 8000 | /docs (Swagger)                    │
 │                                                                         │
-│  Запрос к API каждые 30 минут                                           │
-│  Сохранение JSON в MongoDB                                              │
-│  Логирование и мониторинг                                               │
+│  Эндпоинты:                                                              │
+│  • POST /collect    - Сбор данных из Carbon Intensity API               │
+│  • GET  /statistics - Статистика по данным                              │
+│  • GET  /health     - Healthcheck сервиса                               │
+│  • GET  /data/latest - Последние записи                                 │
+│                                                                         │
+│  Airflow дергает эти ручки каждые 30 минут                              │
 └────────────────────────────────┬────────────────────────────────────────┘
                                  │ Insert
                                  ▼
@@ -86,18 +97,22 @@ docker-compose up -d
 │                        AIRFLOW: Оркестрация                             │
 │                          (Scheduler + Webserver)                        │
 │                                                                         │
-│  DAG 1: EL MongoDB → PostgreSQL (каждый час)                            │
+│  DAG 1: Carbon API Service Collection (каждые 30 минут)                 │
+│  ├─ Health Check: Проверка работоспособности API сервиса                │
+│  ├─ POST /collect: Триггер сбора данных                                 │
+│  ├─ GET /statistics: Получение статистики                               │
+│  └─ Validation: Проверка свежести данных                                │
+│                                                                         │
+│  DAG 2: EL MongoDB → PostgreSQL (каждый час)                            │
 │  ├─ Extract: Чтение новых данных из MongoDB                             │
 │  ├─ Transform: Парсинг JSON, добавление версионности (SCD2)             │
 │  └─ Load: Загрузка в PostgreSQL (raw.carbon_intensity)                  │
 │                                                                         │
-│  DAG 2: DBT Transformations (каждые 2 часа)                             │
+│  DAG 3: DBT Transformations (каждые 2 часа)                             │
 │  ├─ dbt deps: Установка зависимостей                                    │
 │  ├─ dbt run: Построение всех моделей (STG→ODS→DWH→DM)                   │
 │  ├─ dbt test: Запуск тестов качества данных                             │
 │  └─ Elementary: Мониторинг и отчеты                                     │
-│                                                                         |
-│  DAG 3: Data Generation (для тестов)                                    │
 └────────────────────────────────┬────────────────────────────────────────┘
                                  │ EL + DBT
                                  ▼
@@ -156,23 +171,56 @@ docker-compose up -d
 
 ## Компоненты системы
 
-### 1. **APP** - Data Collector (Python Service)
+### 1. **HTTP API Service** - Carbon Intensity API (FastAPI)
+
+**Расположение:** `src/api.py`
+
+**Функции:**
+- REST API для управления сбором данных
+- Swagger UI документация (OpenAPI)
+- Healthcheck и мониторинг
+- Взаимодействие с MongoDB и Carbon Intensity API
+
+**Эндпоинты:**
+- `GET /` - Информация о сервисе
+- `GET /health` - Проверка работоспособности
+- `POST /collect` - Триггер сбора данных
+- `GET /statistics` - Статистика по данным
+- `GET /data/latest` - Последние записи
+
+**Swagger UI:** http://localhost:8000/docs
+
+**Особенности:**
+- Автоматическая документация API
+- Валидация данных через Pydantic
+- Обработка ошибок и логирование
+- Асинхронная работа с FastAPI
+
+---
+
+### 2. **APP** - Data Collector (Python Service)
 
 **Расположение:** `src/`
 
 **Функции:**
-- Сбор данных из Carbon Intensity API каждые 30 минут
+- Фоновый сбор данных из Carbon Intensity API каждые 30 минут
 - Сохранение в MongoDB с upsert стратегией
 - Логирование и метрики
 - Запуск в Docker контейнере
 
 ---
 
-### 2. **AIRFLOW** - Оркестрация процессов
+### 3. **AIRFLOW** - Оркестрация процессов
 
 **Расположение:** `airflow/`
 
 **DAGs:**
+
+#### `carbon_api_service_collection` (каждые 30 минут)
+- Проверка работоспособности HTTP API сервиса
+- Триггер сбора данных через POST /collect
+- Получение статистики и последних записей
+- Валидация свежести данных
 
 #### `el_mongo_to_postgres` (каждый час)
 - Извлечение новых данных из MongoDB
@@ -189,7 +237,7 @@ docker-compose up -d
 
 ---
 
-### 3. **DWH** - Data Warehouse (PostgreSQL + DBT)
+### 4. **DWH** - Data Warehouse (PostgreSQL + DBT)
 
 **Расположение:** `dbt_project/`
 
@@ -217,7 +265,7 @@ docker-compose up -d
 
 ---
 
-### 4. **DBT_PROJECT** - Трансформации данных
+### 5. **DBT_PROJECT** - Трансформации данных
 
 **Особенности:**
 
@@ -239,15 +287,24 @@ docker-compose up -d
 
 ### Процессы
 
-#### **1. Сбор данных** (каждые 30 минут)
+#### **1. Сбор данных через HTTP API** (каждые 30 минут)
+```
+Airflow → POST /collect (Carbon API Service) → Carbon Intensity API → MongoDB
+```
+- Airflow DAG триггерит HTTP эндпоинт
+- API сервис запрашивает Carbon Intensity API
+- Парсинг и валидация JSON
+- Upsert в MongoDB
+
+#### **2. Фоновый сбор данных** (каждые 30 минут)
 ```
 Carbon API → Data Collector → MongoDB
 ```
-- Запрос к API
+- Запрос к API (альтернативный метод)
 - Парсинг JSON
 - Upsert в MongoDB
 
-#### **2. EL процесс** (каждый час)
+#### **3. EL процесс** (каждый час)
 ```
 MongoDB → Airflow → PostgreSQL (raw layer)
 ```
@@ -255,7 +312,7 @@ MongoDB → Airflow → PostgreSQL (raw layer)
 - Добавление версионности (SCD Type 2)
 - Загрузка в raw.carbon_intensity
 
-#### **3. DBT трансформации** (каждые 2 часа)
+#### **4. DBT трансформации** (каждые 2 часа)
 ```
 PostgreSQL raw → DBT → PostgreSQL (staging/ods/dwh/marts)
 ```
@@ -263,7 +320,7 @@ PostgreSQL raw → DBT → PostgreSQL (staging/ods/dwh/marts)
 - Инкрементальные загрузки
 - Тесты качества
 
-#### **4. BI и визуализация**
+#### **5. BI и визуализация**
 ```
 Jupyter
 ```
@@ -344,12 +401,15 @@ docker-compose up -d
 ```bash
 docker-compose ps
 
-# Должно показать 8 контейнеров в статусе "Up":
+# Должно показать 11 контейнеров в статусе "Up":
 # - carbon_mongodb           (MongoDB база данных)
 # - carbon_postgres          (PostgreSQL DWH)
 # - carbon_airflow_webserver (Airflow UI)
 # - carbon_airflow_scheduler (Airflow планировщик)
-# - carbon_data_collector    (Сбор данных из API)
+# - carbon_data_collector    (Фоновый сбор данных из API)
+# - carbon_api_service       (HTTP API сервис FastAPI)
+# - carbon_adminer           (PostgreSQL Web UI)
+# - carbon_mongo_express     (MongoDB Web UI)
 # - carbon_jupyter           (Jupyter Lab для анализа)
 # - carbon_elementary        (Elementary data quality)
 # - carbon_nginx             (Веб-сервер для Elementary отчетов)
@@ -375,9 +435,10 @@ http://localhost:8080
 
 В Airflow UI активируйте DAG:
 
-1. **`el_mongo_to_postgres`** - перенос данных MongoDB → PostgreSQL (каждый час)
-2. **`dbt_transformation`** - DBT трансформации и тесты (каждые 2 часа)
-3. **`generate_data_load`** (опционально) - генерация тестовых данных
+1. **`carbon_api_service_collection`** - сбор данных через HTTP API (каждые 30 минут)
+2. **`el_mongo_to_postgres`** - перенос данных MongoDB → PostgreSQL (каждый час)
+3. **`dbt_transformation`** - DBT трансформации и тесты (каждые 2 часа)
+4. **`generate_data_load`** (опционально) - генерация тестовых данных
 
 ---
 
@@ -563,7 +624,8 @@ carbon-intensity/
 ├── src/                              # Приложение для сбора данных
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main.py
+│   ├── main.py                       # Data Collector (фоновый сервис)
+│   ├── api.py                        # HTTP API Service (FastAPI)
 │   ├── carbon_api.py
 │   ├── database.py
 │   └── config.py
@@ -572,6 +634,7 @@ carbon-intensity/
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── dags/
+│       ├── carbon_api_service_dag.py # HTTP API сбор данных
 │       ├── el_mongo_to_postgres.py
 │       ├── dbt_transformation.py
 │       └── generate_data_dag.py
